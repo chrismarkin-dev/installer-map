@@ -1,0 +1,1169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Installer Network Coverage Map</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js">
+// ── JOB ADDRESS SEARCH ──
+let jobMarker = null;
+
+function findNearest() {
+  const address = document.getElementById('job-address').value.trim();
+  if (!address) return;
+  if (allPins.length === 0) { alert('Map is still loading installers, please wait a moment.'); return; }
+  document.getElementById('job-search-btn').textContent = 'Searching…';
+  fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(address) + '&limit=1', { headers: {'Accept-Language':'en'} })
+    .then(r => r.json())
+    .then(results => {
+      document.getElementById('job-search-btn').textContent = 'Find Nearest';
+      if (!results || !results.length) { alert('Address not found. Try a city name or zip code.'); return; }
+      const lat = parseFloat(results[0].lat);
+      const lng = parseFloat(results[0].lon);
+      showNearest(lat, lng, address);
+    })
+    .catch(() => { document.getElementById('job-search-btn').textContent = 'Find Nearest'; alert('Could not search. Check your internet connection.'); });
+}
+
+function haversineMiles(lat1, lng1, lat2, lng2) {
+  const R = 3958.8, dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function showNearest(lat, lng, address) {
+  if (jobMarker) map.removeLayer(jobMarker);
+  jobMarker = L.marker([lat, lng], {
+    icon: L.divIcon({ html: '<div class="job-map-pin">📍</div>', className:'', iconSize:[34,34], iconAnchor:[17,34] }),
+    zIndexOffset: 1000
+  }).addTo(map).bindPopup('<div class="popup-body"><div class="popup-city" style="font-size:0.85rem">' + address + '</div><div class="popup-state">Job Location</div></div>').openPopup();
+
+  const sorted = allPins.map(p => ({ pin:p, dist: haversineMiles(lat,lng,p.lat,p.lng) }))
+                        .sort((a,b) => a.dist - b.dist).slice(0, 8);
+
+  const panel = document.getElementById('nearest-panel');
+  panel.innerHTML = '<div class="nearest-header">Nearest Installers <span>' + sorted.length + ' closest locations</span></div>' +
+    sorted.map((item, i) => {
+      const cls = i===0?'gold':i===1?'silver':i===2?'bronze':'';
+      const cos = [...new Set(item.pin.installers.map(x=>x.company))].slice(0,3).join(', ');
+      const more = item.pin.installers.length > 3 ? ' +' + (item.pin.installers.length-3) + ' more' : '';
+      return '<div class="nearest-card" onclick="jumpToPin(\'' + encodeURIComponent(item.pin.id) + '\')">' +
+        '<div class="nearest-rank ' + cls + '">' + (i+1) + '</div>' +
+        '<div class="nearest-info"><div class="nearest-city">' + item.pin.city + ', ' + item.pin.state + '</div>' +
+        '<div class="nearest-cos">' + cos + more + '</div></div>' +
+        '<div class="nearest-dist"><strong>' + item.dist.toFixed(1) + '</strong><span>miles</span></div></div>';
+    }).join('');
+  panel.style.display = 'block';
+  document.getElementById('job-clear-btn').style.display = 'block';
+  map.fitBounds([[lat,lng], ...sorted.slice(0,3).map(x=>[x.pin.lat,x.pin.lng])], {padding:[60,60]});
+}
+
+function jumpToPin(id) {
+  const pin = allPins.find(p => p.id === decodeURIComponent(id));
+  if (!pin) return;
+  map.flyTo([pin.lat, pin.lng], 11, {duration:0.8});
+  setTimeout(() => openSidebar(pin), 900);
+}
+
+function clearJobSearch() {
+  if (jobMarker) { map.removeLayer(jobMarker); jobMarker = null; }
+  document.getElementById('job-address').value = '';
+  document.getElementById('nearest-panel').style.display = 'none';
+  document.getElementById('job-clear-btn').style.display = 'none';
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('job-address');
+  if (el) el.addEventListener('keydown', e => { if (e.key==='Enter') findNearest(); });
+});
+
+</script>
+<style>
+  :root {
+    --blue:       #1a5fce;
+    --blue-light: #e8f0fc;
+    --blue-mid:   #3b7de8;
+    --blue-pale:  #f0f5ff;
+    --navy:       #0f2d6e;
+    --text:       #1a2636;
+    --text-mid:   #4a5a72;
+    --text-light: #8898b0;
+    --border:     #dce6f5;
+    --white:      #ffffff;
+    --bg:         #f5f8fe;
+    --shadow:     0 2px 16px rgba(26,95,206,0.10);
+    --shadow-lg:  0 8px 40px rgba(26,95,206,0.14);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: 'Outfit', sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+
+  /* ── HEADER ── */
+  header {
+    position: relative; z-index: 1000;
+    height: 64px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px;
+    background: var(--white);
+    border-bottom: 1.5px solid var(--border);
+    box-shadow: 0 1px 8px rgba(26,95,206,0.07);
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .logo-icon {
+    width: 36px; height: 36px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--blue), var(--navy));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.1rem; color: white; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(26,95,206,0.3);
+  }
+  .logo-text h1 { font-size: 1.05rem; font-weight: 700; color: var(--navy); letter-spacing: -0.01em; }
+  .logo-text p  { font-size: 0.7rem; color: var(--text-light); font-weight: 400; margin-top: 1px; }
+
+  .header-stats { display: flex; gap: 6px; }
+  .stat-pill {
+    background: var(--blue-pale); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 14px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .stat-pill strong { font-size: 0.9rem; font-weight: 700; color: var(--blue); }
+  .stat-pill span   { font-size: 0.7rem; color: var(--text-mid); font-weight: 500; }
+
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    font-family: 'Outfit', sans-serif; font-size: 0.75rem; font-weight: 600;
+    padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    border: 1.5px solid var(--border); background: var(--white); color: var(--text-mid);
+    transition: all 0.15s; letter-spacing: 0.01em;
+  }
+  .btn:hover { border-color: var(--blue-mid); color: var(--blue); background: var(--blue-pale); }
+  .btn.active { background: var(--blue); color: white; border-color: var(--blue); }
+  .btn-primary { background: var(--blue); color: white; border-color: var(--blue); }
+  .btn-primary:hover { background: var(--navy); border-color: var(--navy); color: white; }
+
+  /* ── LAYOUT ── */
+  .layout { display: flex; height: calc(100vh - 64px); position: relative; }
+
+  /* ── MAP ── */
+  #map { flex: 1; z-index: 1; }
+  .leaflet-tile { filter: saturate(0.7) brightness(1.02); }
+  .leaflet-container { background: #e8eef5; }
+  .leaflet-control-zoom a {
+    font-family: 'Outfit', sans-serif !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
+  }
+
+  /* ── SEARCH ── */
+  #search-wrap {
+    position: absolute; top: 14px; left: 14px; z-index: 500;
+    display: flex; flex-direction: column;
+  }
+  .search-inner {
+    display: flex; align-items: center; gap: 8px;
+    background: white; border: 1.5px solid var(--border);
+    border-radius: 10px; padding: 8px 14px;
+    box-shadow: var(--shadow);
+    width: 260px;
+  }
+  .search-inner:focus-within { border-color: var(--blue-mid); box-shadow: 0 0 0 3px rgba(59,125,232,0.12), var(--shadow); }
+  .search-inner svg { color: var(--text-light); flex-shrink: 0; }
+  #search {
+    border: none; outline: none; background: transparent;
+    font-family: 'Outfit', sans-serif; font-size: 0.83rem; color: var(--text);
+    width: 100%;
+  }
+  #search::placeholder { color: var(--text-light); }
+  #search-results {
+    display: none; margin-top: 4px;
+    background: white; border: 1.5px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    box-shadow: var(--shadow-lg); max-height: 240px; overflow-y: auto;
+  }
+  .sr-item {
+    padding: 10px 16px; font-size: 0.82rem; cursor: pointer;
+    border-bottom: 1px solid var(--border); color: var(--text);
+    transition: background 0.1s; display: flex; justify-content: space-between; align-items: center;
+  }
+  .sr-item:last-child { border-bottom: none; }
+  .sr-item:hover { background: var(--blue-pale); color: var(--blue); }
+  .sr-badge { background: var(--blue-light); color: var(--blue); font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 10px; }
+
+  /* ── SIDEBAR ── */
+  #sidebar {
+    width: 0; overflow: hidden;
+    background: var(--white);
+    border-left: 1.5px solid var(--border);
+    display: flex; flex-direction: column;
+    z-index: 400;
+    transition: width 0.3s cubic-bezier(0.4,0,0.2,1);
+    box-shadow: -4px 0 24px rgba(26,95,206,0.08);
+  }
+  #sidebar.open { width: 340px; overflow: visible; }
+  #sidebar-inner { width: 340px; display: flex; flex-direction: column; height: 100%; }
+
+  .sb-head {
+    padding: 20px 22px 16px;
+    border-bottom: 1.5px solid var(--border);
+    background: var(--blue-pale);
+    position: relative;
+  }
+  .sb-location {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+  }
+  .sb-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+  .sb-city { font-size: 1.2rem; font-weight: 700; color: var(--navy); }
+  .sb-state { font-size: 0.78rem; color: var(--text-mid); font-weight: 500; margin-top: 1px; }
+  .sb-count {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--blue); color: white;
+    font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 20px;
+    margin-top: 6px;
+  }
+  #sb-close {
+    position: absolute; top: 14px; right: 14px;
+    background: white; border: 1.5px solid var(--border);
+    color: var(--text-mid); width: 28px; height: 28px; border-radius: 7px;
+    cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  #sb-close:hover { background: var(--blue); color: white; border-color: var(--blue); }
+
+  .sb-list { flex: 1; overflow-y: auto; padding: 14px 18px 20px; }
+  .sb-list::-webkit-scrollbar { width: 4px; }
+  .sb-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .sb-card {
+    background: white; border: 1.5px solid var(--border);
+    border-radius: 10px; padding: 13px 15px; margin-bottom: 10px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    animation: slideIn 0.2s ease both;
+  }
+  .sb-card:hover { border-color: var(--blue-mid); box-shadow: 0 2px 12px rgba(26,95,206,0.1); }
+  @keyframes slideIn { from { opacity:0; transform:translateX(12px); } to { opacity:1; transform:translateX(0); } }
+
+  .sb-co { font-weight: 600; font-size: 0.88rem; color: var(--navy); }
+  .sb-contact { font-size: 0.75rem; color: var(--text-mid); margin-top: 3px; font-weight: 400; }
+  .sb-note {
+    font-size: 0.75rem; color: var(--text-mid); margin-top: 5px; line-height: 1.5;
+    padding-top: 5px; border-top: 1px solid var(--border);
+  }
+  .sb-note::before { content: '📍 '; font-size: 0.7rem; }
+
+  /* ── SETUP BANNER ── */
+  #setup-banner {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 500; background: white; border: 1.5px solid var(--border);
+    border-radius: 14px; padding: 16px 22px; box-shadow: var(--shadow-lg);
+    max-width: 560px; width: calc(100% - 40px);
+    display: flex; align-items: center; gap: 16px;
+  }
+  .banner-icon { font-size: 1.8rem; flex-shrink: 0; }
+  .banner-text h3 { font-size: 0.92rem; font-weight: 700; color: var(--navy); }
+  .banner-text p  { font-size: 0.78rem; color: var(--text-mid); margin-top: 3px; line-height: 1.5; }
+  .banner-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+  /* ── SHEETS INPUT MODAL ── */
+  #sheets-modal {
+    display: none; position: fixed; inset: 0; z-index: 2000;
+    background: rgba(15,45,110,0.35); backdrop-filter: blur(4px);
+    align-items: center; justify-content: center;
+  }
+  #sheets-modal.show { display: flex; }
+  .modal-box {
+    background: white; border-radius: 16px; padding: 32px;
+    width: 520px; max-width: calc(100vw - 32px);
+    box-shadow: 0 20px 60px rgba(15,45,110,0.2);
+  }
+  .modal-box h2 { font-size: 1.2rem; font-weight: 700; color: var(--navy); }
+  .modal-box p  { font-size: 0.82rem; color: var(--text-mid); margin-top: 6px; line-height: 1.6; }
+  .modal-steps { margin: 16px 0; counter-reset: steps; }
+  .step {
+    display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px;
+    font-size: 0.82rem; color: var(--text);
+  }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%; background: var(--blue);
+    color: white; font-size: 0.7rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px;
+  }
+  .step code {
+    background: var(--blue-pale); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 4px; font-size: 0.78rem; color: var(--blue);
+  }
+  .url-input {
+    width: 100%; border: 1.5px solid var(--border); border-radius: 9px;
+    padding: 10px 14px; font-family: 'Outfit', sans-serif; font-size: 0.83rem;
+    color: var(--text); outline: none; margin-top: 14px;
+    transition: border-color 0.15s;
+  }
+  .url-input:focus { border-color: var(--blue-mid); box-shadow: 0 0 0 3px rgba(59,125,232,0.12); }
+  .url-input::placeholder { color: var(--text-light); }
+  .modal-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-end; }
+  #url-error { font-size: 0.75rem; color: #c0392b; margin-top: 6px; display: none; }
+  #loading-msg { font-size: 0.8rem; color: var(--blue); margin-top: 8px; display: none; }
+
+  /* ── CUSTOM MARKERS ── */
+  .map-pin {
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+    border: 2px solid rgba(255,255,255,0.9);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2), 0 0 0 1px rgba(26,95,206,0.2);
+    cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .map-pin:hover { box-shadow: 0 4px 16px rgba(26,95,206,0.35), 0 0 0 2px rgba(26,95,206,0.3); }
+  .map-pin-inner {
+    transform: rotate(45deg);
+    font-size: 9px; font-weight: 700; color: white;
+    font-family: 'Outfit', sans-serif; line-height: 1;
+  }
+
+  /* ── LEAFLET POPUP ── */
+  .leaflet-popup-content-wrapper {
+    background: white !important; border-radius: 12px !important;
+    border: 1.5px solid var(--border) !important;
+    box-shadow: var(--shadow-lg) !important; padding: 0 !important;
+  }
+  .leaflet-popup-content { margin: 0 !important; min-width: 200px !important; }
+  .leaflet-popup-tip { background: white !important; }
+  .leaflet-popup-close-button { top: 8px !important; right: 10px !important; color: var(--text-light) !important; font-size: 1rem !important; }
+
+  .popup-body { padding: 14px 16px; }
+  .popup-city { font-weight: 700; font-size: 1rem; color: var(--navy); }
+  .popup-state { font-size: 0.72rem; color: var(--text-mid); margin-top: 1px; }
+  .popup-count {
+    display: inline-block; margin-top: 7px;
+    background: var(--blue-light); color: var(--blue);
+    font-size: 0.68rem; font-weight: 600; padding: 2px 9px; border-radius: 10px;
+  }
+  .popup-view {
+    display: block; width: 100%; margin-top: 10px;
+    background: var(--blue); color: white; border: none;
+    font-family: 'Outfit', sans-serif; font-size: 0.75rem; font-weight: 600;
+    padding: 8px 0; border-radius: 8px; cursor: pointer; letter-spacing: 0.02em;
+    transition: background 0.15s;
+  }
+  .popup-view:hover { background: var(--navy); }
+
+  /* ── LEGEND ── */
+  #legend {
+    position: absolute; bottom: 20px; right: 20px; z-index: 400;
+    background: white; border: 1.5px solid var(--border);
+    border-radius: 10px; padding: 12px 16px;
+    box-shadow: var(--shadow); font-size: 0.72rem;
+  }
+  #legend h4 { font-weight: 600; color: var(--navy); font-size: 0.72rem; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .leg { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: var(--text-mid); }
+  .leg:last-child { margin-bottom: 0; }
+  .leg-dot { width: 12px; height: 12px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 1.5px solid rgba(255,255,255,0.8); }
+
+  /* ── STATUS BAR ── */
+  #status-bar {
+    position: absolute; top: 14px; right: 14px; z-index: 500;
+    display: flex; gap: 8px;
+  }
+  .status-pill {
+    background: white; border: 1.5px solid var(--border);
+    border-radius: 20px; padding: 6px 14px;
+    font-size: 0.72rem; color: var(--text-mid);
+    box-shadow: var(--shadow); display: flex; align-items: center; gap: 6px;
+    cursor: pointer; transition: all 0.15s;
+  }
+  .status-pill:hover { border-color: var(--blue-mid); color: var(--blue); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; }
+  .status-dot.loading { background: #f59e0b; animation: pulse 1s infinite; }
+  .status-dot.error   { background: #ef4444; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* ── JOB SEARCH ── */
+  #job-search-wrap {
+    flex: 1; max-width: 480px; margin: 0 16px; position: relative; z-index: 500;
+  }
+  .job-search-inner {
+    display: flex; gap: 8px; align-items: center;
+    background: white; border: 2px solid var(--blue);
+    border-radius: 12px; padding: 7px 12px;
+    box-shadow: 0 2px 12px rgba(26,95,206,0.15);
+  }
+  .job-label {
+    font-size: 0.68rem; font-weight: 700; color: var(--blue);
+    text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap;
+    background: var(--blue-pale); padding: 3px 8px; border-radius: 6px;
+  }
+  #job-address {
+    flex: 1; border: none; outline: none;
+    font-family: 'Outfit', sans-serif; font-size: 0.85rem; color: var(--text);
+    background: transparent;
+  }
+  #job-address::placeholder { color: var(--text-light); }
+  #job-search-btn {
+    background: var(--blue); color: white; border: none;
+    font-family: 'Outfit', sans-serif; font-size: 0.78rem; font-weight: 600;
+    padding: 7px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+    transition: background 0.15s;
+  }
+  #job-search-btn:hover { background: var(--navy); }
+  #job-clear-btn {
+    background: none; border: none; color: var(--text-light);
+    cursor: pointer; font-size: 1rem; padding: 2px 6px; display: none;
+  }
+  #job-clear-btn:hover { color: var(--text); }
+  #nearest-panel {
+    display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+    background: white; border: 1.5px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow-lg); max-height: 360px; overflow-y: auto; z-index: 600;
+  }
+  .nearest-header {
+    padding: 10px 16px; background: var(--blue); color: white;
+    font-size: 0.78rem; font-weight: 600;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .nearest-header span { opacity: 0.8; font-weight: 400; font-size: 0.7rem; }
+  .nearest-card {
+    padding: 11px 16px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+    display: flex; gap: 12px; align-items: center;
+  }
+  .nearest-card:last-child { border-bottom: none; }
+  .nearest-card:hover { background: var(--blue-pale); }
+  .nearest-rank {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--blue);
+    color: white; font-size: 0.72rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .nearest-rank.gold   { background: #f59e0b; }
+  .nearest-rank.silver { background: #94a3b8; }
+  .nearest-rank.bronze { background: #b45309; }
+  .nearest-info { flex: 1; }
+  .nearest-city { font-weight: 600; font-size: 0.88rem; color: var(--navy); }
+  .nearest-cos  { font-size: 0.74rem; color: var(--text-mid); margin-top: 2px; }
+  .nearest-dist { text-align: right; flex-shrink: 0; }
+  .nearest-dist strong { font-size: 0.95rem; font-weight: 700; color: var(--blue); display: block; }
+  .nearest-dist span   { font-size: 0.68rem; color: var(--text-light); }
+  .job-map-pin {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: white; border: 3px solid #ef4444;
+    display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+    box-shadow: 0 2px 12px rgba(239,68,68,0.4), 0 0 0 6px rgba(239,68,68,0.1);
+    animation: pulseJob 1.5s ease infinite;
+  }
+  @keyframes pulseJob {
+    0%,100% { box-shadow: 0 2px 12px rgba(239,68,68,0.4), 0 0 0 6px rgba(239,68,68,0.1); }
+    50%      { box-shadow: 0 2px 12px rgba(239,68,68,0.5), 0 0 0 14px rgba(239,68,68,0.05); }
+  }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">📍</div>
+    <div class="logo-text">
+      <h1>Installer Network</h1>
+      <p>GPS &amp; Telematics Coverage — United States</p>
+    </div>
+  </div>
+  <div class="header-stats">
+    <div class="stat-pill"><strong id="h-companies">—</strong><span>Companies</span></div>
+    <div class="stat-pill"><strong id="h-locations">—</strong><span>Locations</span></div>
+    <div class="stat-pill"><strong id="h-states">—</strong><span>States</span></div>
+  </div>
+  <div id="job-search-wrap">
+    <div class="job-search-inner">
+      <div class="job-label">📍 Job</div>
+      <input id="job-address" type="text" placeholder="Enter address to find nearest installer…" autocomplete="off">
+      <button id="job-clear-btn" onclick="clearJobSearch()">✕</button>
+      <button id="job-search-btn" onclick="findNearest()">Find Nearest</button>
+    </div>
+    <div id="nearest-panel"></div>
+  </div>
+  <div class="header-actions">
+    <button class="btn active" id="btn-all"   onclick="setFilter('all',this)">All</button>
+    <button class="btn"        id="btn-multi" onclick="setFilter('multi',this)">3+ Installers</button>
+    <button class="btn btn-primary" onclick="showModal()">⚙ Connect Sheet</button>
+  </div>
+</header>
+
+<div class="layout">
+  <div id="map"></div>
+
+  <div id="sidebar">
+    <div id="sidebar-inner">
+      <div class="sb-head">
+        <button id="sb-close" onclick="closeSidebar()">✕</button>
+        <div class="sb-location">
+          <div class="sb-dot"></div>
+          <div>
+            <div class="sb-city" id="sb-city">—</div>
+            <div class="sb-state" id="sb-state"></div>
+          </div>
+        </div>
+        <div class="sb-count" id="sb-count"></div>
+      </div>
+      <div class="sb-list" id="sb-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Search -->
+<div id="search-wrap">
+  <div class="search-inner">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input id="search" type="text" placeholder="Search city or company…" autocomplete="off">
+  </div>
+  <div id="search-results"></div>
+</div>
+
+<!-- Status -->
+<div id="status-bar">
+  <div class="status-pill" onclick="reloadData()">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">No sheet connected</span>
+  </div>
+</div>
+
+<!-- Legend -->
+<div id="legend">
+  <h4>Installers per City</h4>
+  <div class="leg"><div class="leg-dot" style="background:#5ba4f5"></div> 1–2 installers</div>
+  <div class="leg"><div class="leg-dot" style="background:#1a5fce"></div> 3–5 installers</div>
+  <div class="leg"><div class="leg-dot" style="background:#0f2d6e"></div> 6+ installers</div>
+</div>
+
+<!-- Setup Banner (shown when no sheet connected) -->
+<div id="setup-banner" style="display:none">
+  <div class="banner-icon">🗂️</div>
+  <div class="banner-text">
+    <h3>Connect your Google Sheet to go live</h3>
+    <p>Add your installer data to a Google Sheet and paste the share URL — the map will update automatically whenever you edit it.</p>
+    <div class="banner-actions">
+      <button class="btn btn-primary" onclick="showModal()">Connect Google Sheet →</button>
+      <button class="btn" onclick="loadSampleData()">Preview with sample data</button>
+    </div>
+  </div>
+</div>
+
+<!-- Google Sheets Modal -->
+<div id="sheets-modal">
+  <div class="modal-box">
+    <h2>🔗 Connect your Google Sheet</h2>
+    <p>Your sheet must be published publicly. The map will read it live — just keep editing your sheet and the map updates for anyone viewing it.</p>
+
+    <div class="modal-steps">
+      <div class="step"><div class="step-num">1</div><div>Open your Google Sheet → <strong>File → Share → Publish to web</strong></div></div>
+      <div class="step"><div class="step-num">2</div><div>Set to <strong>Entire Document</strong>, format <strong>CSV</strong> → click <strong>Publish</strong> → copy the URL it shows you</div></div>
+      <div class="step"><div class="step-num">3</div><div>Make sure row 1 has these headers: <code>State</code> <code>Company</code> <code>Contact</code> <code>Phone</code> <code>Email</code> <code>City</code> <code>Notes</code> <code>Active</code></div></div>
+      <div class="step"><div class="step-num">4</div><div>Paste <em>any</em> Google Sheets URL below — share link, edit link, or published CSV link all work</div></div>
+    </div>
+
+    <input class="url-input" id="sheet-url" type="text" placeholder="Paste any Google Sheets URL here…">
+    <div id="url-error">⚠ Could not load that URL. Make sure the sheet is published to web as CSV.</div>
+    <div id="loading-msg">⏳ Loading your sheet…</div>
+
+    <div class="modal-actions">
+      <button class="btn" onclick="hideModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="connectSheet()">Connect &amp; Load Map</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CITY COORDINATES ──
+const CITY_COORDS = {
+  "huntsville":[34.7304,-86.5861],"bessemer":[33.4018,-86.9544],"birmingham":[33.5186,-86.8104],
+  "selma":[32.4074,-87.0211],"foley":[30.4063,-87.6836],"anniston":[33.6598,-85.8316],
+  "montgomery":[32.3668,-86.3000],"mobile":[30.6954,-88.0399],"dothan":[31.2232,-85.3905],
+  "cordova":[60.5430,-145.7578],"anchorage":[61.2181,-149.9003],"juneau":[58.3005,-134.4197],
+  "phoenix":[33.4484,-112.0740],"tucson":[32.2226,-110.9747],"mesa":[33.4152,-111.8315],
+  "scottsdale":[33.4942,-111.9261],"flagstaff":[35.1983,-111.6513],"tempe":[33.4255,-111.9400],
+  "little rock":[34.7465,-92.2896],"russellville":[35.2784,-93.1338],"harrison":[36.2298,-93.1077],
+  "jonesboro":[35.8423,-90.7043],"hot springs":[34.5037,-93.0552],"sherwood":[34.8151,-92.2243],
+  "fort smith":[35.3859,-94.3985],"fayetteville":[36.0626,-94.1574],
+  "los angeles":[34.0522,-118.2437],"san diego":[32.7157,-117.1611],"san francisco":[37.7749,-122.4194],
+  "sacramento":[38.5816,-121.4944],"fresno":[36.7378,-119.7871],"san jose":[37.3382,-121.8863],
+  "bakersfield":[35.3733,-119.0187],"long beach":[33.7701,-118.1937],"riverside":[33.9806,-117.3755],
+  "rancho cucamonga":[34.1064,-117.5931],"torrance":[33.8358,-118.3406],"oakland":[37.8044,-122.2712],
+  "stockton":[37.9577,-121.2908],"concord":[37.9779,-122.0311],"dana point":[33.4669,-117.6981],
+  "tiburon":[37.8913,-122.4566],"gardena":[33.8883,-118.3089],"lemon grove":[32.7426,-117.0312],
+  "northridge":[34.2297,-118.5350],"costa mesa":[33.6411,-117.9187],"woodland":[38.6785,-121.7733],
+  "north highlands":[38.6627,-121.3716],"perris":[33.7825,-117.2286],"loma linda":[34.0483,-117.2611],
+  "indio":[33.7206,-116.2156],
+  "denver":[39.7392,-104.9903],"aurora":[39.7294,-104.8319],"colorado springs":[38.8339,-104.8214],
+  "fort collins":[40.5853,-105.0844],"grand junction":[39.0639,-108.5506],"loveland":[40.3978,-105.0749],
+  "pueblo":[38.2544,-104.6091],"longmont":[40.1672,-105.1019],"littleton":[39.6133,-105.0166],
+  "monument":[39.0939,-104.8727],"pueblo west":[38.3541,-104.7269],
+  "hartford":[41.7658,-72.6851],"manchester":[41.7762,-72.5215],"new haven":[41.3083,-72.9279],
+  "bridgeport":[41.1865,-73.1952],"coventry":[41.7001,-72.3495],"colchester":[41.5756,-72.3362],
+  "ellington":[41.9040,-72.4618],"east berlin":[41.6215,-72.7143],
+  "wilmington":[39.7447,-75.5484],"dover":[39.1582,-75.5244],
+  "washington":[38.9072,-77.0369],"dc":[38.9072,-77.0369],
+  "miami":[25.7617,-80.1918],"orlando":[28.5383,-81.3792],"tampa":[27.9506,-82.4572],
+  "jacksonville":[30.3322,-81.6557],"fort lauderdale":[26.1224,-80.1373],"st. augustine":[29.8943,-81.3145],
+  "pensacola":[30.4213,-87.2169],"cape coral":[26.5629,-81.9495],"fort myers":[26.6406,-81.8723],
+  "lakeland":[28.0395,-81.9498],"clearwater":[27.9659,-82.8001],"boca raton":[26.3683,-80.1289],
+  "kissimmee":[28.2919,-81.4076],"naples":[26.1420,-81.7948],"delray beach":[26.4615,-80.0728],
+  "spring hill":[28.4780,-82.5444],"palm coast":[29.5844,-81.2079],"apopka":[28.6753,-81.5323],
+  "winter haven":[28.0222,-81.7329],"pensacola beach":[30.3255,-87.1390],
+  "atlanta":[33.7490,-84.3880],"savannah":[32.0835,-81.0998],"augusta":[33.4735,-82.0105],
+  "macon":[32.8407,-83.6324],"marietta":[33.9526,-84.5499],"kennesaw":[34.0234,-84.6155],
+  "lawrenceville":[33.9565,-83.9879],"duluth":[34.0032,-84.1449],"stone mountain":[33.8082,-84.1702],
+  "braselton":[34.1026,-83.8038],"toccoa":[34.5773,-83.3321],"tifton":[31.4505,-83.5085],
+  "statesboro":[32.4488,-81.7832],"newnan":[33.3807,-84.7997],"grovetown":[33.4540,-82.2068],
+  "austell":[33.8121,-84.6410],"college park":[33.6534,-84.4493],"decatur":[33.7748,-84.2963],
+  "hoschton":[34.0985,-83.7599],"snellville":[33.8590,-84.0077],"mcdonough":[33.4473,-84.1469],
+  "fayetteville":[33.4487,-84.4641],"flowery branch":[34.1837,-83.9252],"oakwood":[34.2262,-83.8838],
+  "honolulu":[21.3069,-157.8583],"hilo":[19.7297,-155.0900],"kailua":[21.3974,-157.7383],
+  "boise":[43.6150,-116.2023],"twin falls":[42.5630,-114.4609],"kuna":[43.4924,-116.4194],
+  "coeur dalene":[47.6777,-116.7805],"rathdrum":[47.8038,-116.8918],"nampa":[43.5407,-116.5635],
+  "idaho falls":[43.4917,-112.0330],"pocatello":[42.8713,-112.4455],"lewiston":[46.4165,-117.0177],
+  "chicago":[41.8781,-87.6298],"rockford":[42.2711,-89.0940],"springfield":[39.7817,-89.6501],
+  "schaumburg":[42.0334,-88.0834],"elk grove":[42.0031,-87.9970],"algonquin":[42.1656,-88.2931],
+  "romeoville":[41.6475,-88.0873],"riverdale":[41.6386,-87.6431],"galena":[42.4169,-90.4293],
+  "villa park":[41.8892,-87.9762],"lombard":[41.8800,-88.0076],"sycamore":[41.9886,-88.6862],
+  "aurora":[41.7606,-88.3201],"elburn":[41.8936,-88.4726],"crete":[41.4436,-87.6320],
+  "plainfield":[41.6244,-88.1997],"streator":[41.1214,-88.8356],"cahokia":[38.5736,-90.1887],
+  "ofallon":[38.5948,-89.9120],"morris":[41.3578,-88.4317],
+  "indianapolis":[39.7684,-86.1581],"fort wayne":[41.0793,-85.1394],"south bend":[41.6764,-86.2520],
+  "bloomington":[39.1653,-86.5264],"evansville":[37.9716,-87.5711],"hammond":[41.5834,-87.5001],
+  "muncie":[40.1934,-85.3864],"newburgh":[37.9456,-87.4017],"leesburg":[40.9445,-85.8397],
+  "warsaw":[41.2406,-85.8527],"anderson":[40.1053,-85.6803],"cicero":[40.1245,-86.0133],
+  "shoals":[38.6609,-86.6919],"taswell":[38.3792,-86.5836],
+  "des moines":[41.5868,-93.6250],"cedar rapids":[41.9779,-91.6656],"davenport":[41.5236,-90.5776],
+  "winterset":[41.3314,-94.0133],"iowa city":[41.6611,-91.5302],"sioux city":[42.4999,-96.4003],
+  "wichita":[37.6872,-97.3301],"kansas city":[39.0997,-94.5786],"topeka":[39.0558,-95.6890],
+  "overland park":[38.9822,-94.6708],"olathe":[38.8814,-94.8191],
+  "louisville":[38.2527,-85.7585],"lexington":[38.0406,-84.5037],"bowling green":[36.9685,-86.4808],
+  "owensboro":[37.7719,-87.1111],"covington":[39.0837,-84.5086],"mt. eden":[37.9759,-85.4163],
+  "taylorsville":[38.0345,-85.3452],"elizabeth":[37.7010,-85.7658],
+  "new orleans":[29.9511,-90.0715],"baton rouge":[30.4515,-91.1871],"shreveport":[32.5252,-93.7502],
+  "lafayette":[30.2241,-92.0198],"metairie":[29.9977,-90.1794],"reserve":[30.0607,-90.5557],
+  "bastrop":[32.7779,-91.9110],"haughton":[32.5329,-93.4874],"leesville":[31.1449,-93.2635],
+  "jefferson":[29.9827,-90.1493],"bossier city":[32.5160,-93.7321],
+  "portland":[43.6591,-70.2568],"westbrook":[43.6767,-70.3703],"bangor":[44.8012,-68.7778],
+  "baltimore":[39.2904,-76.6122],"annapolis":[38.9784,-76.4922],"rockville":[39.0840,-77.1528],
+  "glen burnie":[39.1621,-76.6244],"odenton":[39.0731,-76.6994],"sparrows point":[39.2215,-76.4888],
+  "brandywine":[38.6937,-76.8469],"taneytown":[39.6576,-77.1758],"severn":[39.1374,-76.6991],
+  "essex":[39.3076,-76.4741],"emmitsburg":[39.7073,-77.3261],"union bridge":[39.5476,-77.1789],
+  "boston":[42.3601,-71.0589],"worcester":[42.2626,-71.8023],"lowell":[42.6334,-71.3162],
+  "springfield":[42.1015,-72.5898],"lynn":[42.4668,-70.9495],"taunton":[41.9001,-71.0898],
+  "auburn":[42.1973,-71.8356],"billerica":[42.5587,-71.2689],"beverly":[42.5584,-70.8800],
+  "methuen":[42.7262,-71.1909],"yarmouth":[41.7043,-70.2287],"east bridgewater":[42.0354,-70.9692],
+  "wayland":[42.3601,-71.3609],
+  "detroit":[42.3314,-83.0458],"grand rapids":[42.9634,-85.6681],"lansing":[42.7325,-84.5555],
+  "flint":[43.0125,-83.6875],"dearborn":[42.3223,-83.1763],"kalamazoo":[42.2917,-85.5872],
+  "norton shores":[43.1803,-86.2638],"oak park":[42.4631,-83.1827],"flushing":[43.0614,-83.8452],
+  "brighton":[42.5295,-83.7802],"roscommon":[44.4997,-84.5882],"escanaba":[45.7450,-87.0644],
+  "menominee":[45.1077,-87.6145],"iron mountain":[45.8203,-88.0659],
+  "minneapolis":[44.9778,-93.2650],"st. paul":[44.9537,-93.0900],"duluth":[46.7867,-92.1005],
+  "rochester":[44.0121,-92.4802],"bloomington":[44.8408,-93.3477],"barnesville":[46.6536,-96.4189],
+  "fergus falls":[46.2833,-96.0778],"moorhead":[46.8739,-96.7678],"lakeville":[44.6497,-93.2427],
+  "maple grove":[45.0724,-93.4558],"plymouth":[44.9886,-93.4708],"st. cloud":[45.5579,-94.1632],
+  "bemidji":[47.4736,-94.8803],"marshall":[44.4466,-95.7897],"eagan":[44.8037,-93.1669],
+  "hopkins":[44.9236,-93.4122],
+  "jackson":[32.2988,-90.1848],"biloxi":[30.3960,-88.8853],"hernando":[34.8237,-89.9931],
+  "laurel":[31.6938,-89.1306],"starkville":[33.4504,-88.8184],"carthage":[32.7343,-89.5342],
+  "quitman":[30.7838,-83.5580],
+  "st. louis":[38.6270,-90.1994],"blue springs":[39.0170,-94.2819],"chesterfield":[38.6631,-90.5771],
+  "cassville":[36.6784,-93.8672],"st. clair":[38.3479,-90.9896],"university city":[38.6651,-90.3120],
+  "vandalia":[38.9606,-89.0934],"bourbon":[38.1582,-91.2429],
+  "billings":[45.7833,-108.5007],"missoula":[46.8721,-113.9940],"columbia falls":[48.3722,-114.1839],
+  "st. regis":[47.2999,-115.0970],"great falls":[47.5053,-111.3008],
+  "omaha":[41.2565,-95.9345],"lincoln":[40.8136,-96.7026],"lexington":[40.7810,-99.7401],
+  "las vegas":[36.1699,-115.1398],"reno":[39.5296,-119.8138],"henderson":[36.0395,-114.9817],
+  "mesquite":[36.8057,-114.0671],"sparks":[39.5349,-119.7527],
+  "manchester":[42.9956,-71.4548],"nashua":[42.7654,-71.4676],"derry":[42.8812,-71.3281],
+  "concord":[43.2081,-71.5376],"portsmouth":[43.0718,-70.7626],
+  "newark":[40.7357,-74.1724],"paterson":[40.9168,-74.1718],"woodbridge":[40.5576,-74.2846],
+  "trenton":[40.2171,-74.7429],"irvington":[40.7231,-74.2302],"elizabeth":[40.6640,-74.2107],
+  "lyndhurst":[40.8093,-74.1143],"fort lee":[40.8501,-73.9701],"carlstadt":[40.8379,-74.0879],
+  "guttenberg":[40.7923,-74.0049],"elmer":[39.5934,-75.1716],"sparta":[41.0334,-74.6349],
+  "pittsgrove":[39.5401,-75.1205],"hackettstown":[40.8534,-74.8282],"morganville":[40.3676,-74.2846],
+  "belleville":[40.7940,-74.1521],"totowa":[40.9040,-74.2182],
+  "albuquerque":[35.0844,-106.6504],"las cruces":[32.3199,-106.7637],"santa fe":[35.6870,-105.9378],
+  "tijeras":[35.0975,-106.3893],"arizona city":[32.7523,-111.6699],
+  "new york city":[40.7128,-74.0060],"new york":[40.7128,-74.0060],"nyc":[40.7128,-74.0060],
+  "buffalo":[42.8864,-78.8784],"rochester":[43.1566,-77.6088],"yonkers":[40.9312,-73.8988],
+  "albany":[42.6526,-73.7562],"bethpage":[40.7479,-73.4818],"jamaica":[40.6928,-73.8086],
+  "monticello":[41.6557,-74.6885],"tonawanda":[43.0231,-78.8800],"hempstead":[40.7062,-73.6187],
+  "selden":[40.8726,-73.0407],"batavia":[43.0006,-78.1875],"pittsford":[43.0900,-77.5178],
+  "livonia":[42.8226,-77.6661],"broadalbin":[43.0603,-74.1974],"amsterdam":[42.9387,-74.1882],
+  "glendale":[40.7287,-73.8665],
+  "charlotte":[35.2271,-80.8431],"raleigh":[35.7796,-78.6382],"greensboro":[36.0726,-79.7920],
+  "durham":[35.9940,-78.8986],"fayetteville":[35.0527,-78.8784],"leland":[34.2196,-78.0450],
+  "mooresville":[35.5846,-80.8098],"wilmington":[34.2257,-77.9447],"concord":[35.4088,-80.5800],
+  "goldsboro":[35.3849,-77.9925],"jacksonville":[34.7541,-77.4302],"richlands":[34.8968,-77.5493],
+  "roanoke rapids":[36.4618,-77.6541],"boone":[36.2168,-81.6746],"elizabethtown":[34.6316,-78.6050],
+  "hendersonville":[35.3179,-82.4607],"apex":[35.7327,-78.8503],
+  "fargo":[46.8772,-96.7898],"minot":[48.2325,-101.2963],"bismarck":[46.8083,-100.7837],
+  "columbus":[39.9612,-82.9988],"cleveland":[41.4993,-81.6944],"cincinnati":[39.1031,-84.5120],
+  "toledo":[41.6528,-83.5379],"dayton":[39.7589,-84.1916],"steubenville":[40.3698,-80.6340],
+  "grove city":[39.8815,-83.0930],"norwalk":[41.2428,-82.6157],"macedonia":[41.3137,-81.5001],
+  "brooklyn heights":[41.4282,-81.6621],"hamilton":[39.3995,-84.5613],"napoleon":[41.3942,-84.1252],
+  "mingo junction":[40.3237,-80.6154],"campbell":[41.0786,-80.5987],"brookfield":[41.2481,-80.5837],
+  "oklahoma city":[35.4676,-97.5164],"tulsa":[36.1540,-95.9928],"edmond":[35.6528,-97.4781],
+  "norman":[35.2226,-97.4395],"midwest city":[35.4495,-97.3967],"seiling":[36.1553,-98.9264],
+  "warr acres":[35.5225,-97.6197],
+  "portland":[45.5051,-122.6750],"salem":[44.9429,-123.0351],"eugene":[44.0521,-123.0868],
+  "medford":[42.3265,-122.8756],"corvallis":[44.5646,-123.2620],"scappoose":[45.7518,-122.8765],
+  "canby":[45.2637,-122.6929],"springfield":[44.0462,-123.0220],
+  "philadelphia":[39.9526,-75.1652],"pittsburgh":[40.4406,-79.9959],"allentown":[40.6023,-75.4714],
+  "harrisburg":[40.2732,-76.8867],"reading":[40.3356,-75.9269],"york":[39.9626,-76.7277],
+  "nazareth":[40.7245,-75.3102],"chambersburg":[39.9370,-77.6611],"topton":[40.5054,-75.6071],
+  "east stroudsburg":[41.0012,-75.1813],"ephrata":[40.1798,-76.1791],"pittston":[41.3265,-75.7893],
+  "new castle":[40.9959,-80.3470],"west lawn":[40.3315,-75.9922],"warrington":[40.2476,-75.1343],
+  "delta":[39.6875,-76.3268],"mocanaqua":[41.1748,-76.1246],"audubon":[40.1148,-75.4279],
+  "king of prussia":[40.0913,-75.3824],"norristown":[40.1215,-75.3399],"east norriton":[40.1484,-75.3777],
+  "providence":[41.8240,-71.4128],"lincoln":[41.9023,-71.4312],"cranston":[41.7798,-71.4373],
+  "columbia":[34.0007,-81.0348],"charleston":[32.7765,-79.9311],"greenville":[34.8526,-82.3940],
+  "myrtle beach":[33.6891,-78.8867],"spartanburg":[34.9496,-81.9321],"darlington":[34.2998,-79.8764],
+  "orangeburg":[33.4918,-80.8651],"walterboro":[32.9049,-80.6681],"newberry":[34.2795,-81.6148],
+  "florence":[34.1954,-79.7626],"hilton head":[32.2163,-80.7526],"westminster":[34.6654,-83.0988],
+  "piedmont":[34.7015,-82.4621],"easley":[34.8298,-82.6015],"marion":[34.1804,-79.4001],
+  "leesville":[34.0115,-81.5132],"moore":[34.7754,-82.2282],
+  "sioux falls":[43.5446,-96.7311],"rapid city":[44.0805,-103.2310],"watertown":[44.8994,-97.1147],
+  "mitchell":[43.7094,-98.0298],"aberdeen":[45.4647,-98.4865],
+  "nashville":[36.1627,-86.7816],"memphis":[35.1495,-90.0490],"knoxville":[35.9606,-83.9207],
+  "chattanooga":[35.0456,-85.3097],"clarksville":[36.5298,-87.3595],"white house":[36.4659,-86.6708],
+  "kingsport":[36.5484,-82.5618],"la vergne":[36.0162,-86.5819],"greenville":[36.1631,-82.8307],
+  "hohenwald":[35.5484,-87.5475],"puryear":[36.4412,-88.3981],"lebanon":[36.2081,-86.2911],
+  "fayetteville":[35.1523,-86.5703],"jamestown":[36.4265,-84.9316],"monterey":[36.1473,-85.2680],
+  "strawberry plains":[36.0640,-83.7032],"portland":[36.5812,-86.5161],"sparta":[35.9248,-85.4647],
+  "houston":[29.7604,-95.3698],"san antonio":[29.4241,-98.4936],"dallas":[32.7767,-96.7970],
+  "austin":[30.2672,-97.7431],"fort worth":[32.7555,-97.3308],"el paso":[31.7619,-106.4850],
+  "corpus christi":[27.8006,-97.3964],"laredo":[27.5306,-99.4803],"odessa":[31.8457,-102.3676],
+  "midland":[31.9973,-102.0779],"beaumont":[30.0802,-94.1266],"tyler":[32.3513,-95.3011],
+  "brownsville":[25.9017,-97.4975],"denton":[33.2148,-97.1331],"arlington":[32.7357,-97.1081],
+  "spring":[30.0799,-95.4172],"leander":[30.5788,-97.8531],"new braunfels":[29.7030,-98.1245],
+  "splendora":[30.2302,-95.1574],"porter":[30.1129,-95.2802],"windsor":[30.1621,-97.9891],
+  "euless":[32.8370,-97.0819],"grand prairie":[32.7460,-97.0074],"grapevine":[32.9343,-97.0781],
+  "irving":[32.8140,-96.9489],"north richland hills":[32.8343,-97.2289],"southlake":[32.9440,-97.1320],
+  "alba":[32.7943,-95.6302],"seven points":[32.1204,-96.2183],"atascocita":[30.0005,-95.1763],
+  "kingwood":[30.0585,-95.2027],"huntsville":[30.7235,-95.5507],"alvin":[29.4238,-95.2441],
+  "robstown":[27.7897,-97.6683],"liberty hill":[30.6618,-97.9188],"cedar hill":[32.5885,-96.9561],
+  "burleson":[32.5421,-97.3208],"ponder":[33.1956,-97.2897],"cypress":[29.9693,-95.6972],
+  "rosenberg":[29.5572,-95.8086],"azle":[32.8957,-97.5367],"paradise":[33.1551,-97.6938],
+  "zapata":[26.9067,-99.2723],"del rio":[29.3625,-100.8959],"anna":[33.3493,-96.5486],
+  "beckville":[32.2415,-94.4572],"troy":[31.2063,-97.2988],"horizon city":[31.6851,-106.1815],
+  "laguna heights":[26.0660,-97.2236],"port isabel":[26.0690,-97.2133],"taft":[27.9794,-97.3942],
+  "hudson oaks":[32.7441,-97.5475],"far west side":[29.5192,-98.6799],
+  "salt lake city":[40.7608,-111.8910],"provo":[40.2338,-111.6585],"ogden":[41.2230,-111.9738],
+  "orem":[40.2969,-111.6946],"herriman":[40.5140,-112.0324],"springville":[40.1655,-111.6107],
+  "taylorsville":[40.6677,-111.9388],"st. george":[37.0965,-113.5684],
+  "burlington":[44.4759,-73.2121],"montpelier":[44.2601,-72.5754],"rutland":[43.6106,-72.9726],
+  "richmond":[37.5407,-77.4360],"norfolk":[36.8508,-76.2859],"virginia beach":[36.8529,-75.9780],
+  "roanoke":[37.2710,-79.9414],"lynchburg":[37.4138,-79.1422],"ashburn":[39.0438,-77.4874],
+  "fredericksburg":[38.3032,-77.4605],"portsmouth":[36.8354,-76.2983],"woodbridge":[38.6582,-77.2497],
+  "covington":[37.7937,-79.9939],"windsor":[36.9996,-76.9427],"covington":[37.7937,-79.9939],
+  "seattle":[47.6062,-122.3321],"spokane":[47.6588,-117.4260],"tacoma":[47.2529,-122.4443],
+  "vancouver":[45.6387,-122.6615],"olympia":[47.0379,-122.9007],"marysville":[48.0518,-122.1771],
+  "roy":[47.2401,-122.3812],
+  "charleston":[38.3498,-81.6326],"huntington":[38.4192,-82.4452],"weirton":[40.4187,-80.5895],
+  "st. albans":[38.3473,-81.8151],"parkersburg":[39.2667,-81.5615],
+  "milwaukee":[43.0389,-87.9065],"madison":[43.0731,-89.4012],"green bay":[44.5133,-88.0133],
+  "sheboygan":[43.7508,-87.7145],"eau claire":[44.8113,-91.4985],"altoona":[44.8022,-91.4366],
+  "stoddard":[43.6736,-91.2196],"ogema":[45.4552,-90.3555],
+  "cheyenne":[41.1400,-104.8202],"casper":[42.8666,-106.3131],"laramie":[41.3114,-105.5911]
+};
+
+// ── STATE → ABBREVIATION ──
+const STATE_ABBR = {
+  "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR","California":"CA",
+  "Colorado":"CO","Connecticut":"CT","Delaware":"DE","D.C.":"DC","Florida":"FL",
+  "Georgia":"GA","Hawaii":"HI","Idaho":"ID","Illinois":"IL","Indiana":"IN",
+  "Iowa":"IA","Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME",
+  "Maryland":"MD","Massachusetts":"MA","Michigan":"MI","Minnesota":"MN",
+  "Mississippi":"MS","Missouri":"MO","Montana":"MT","Nebraska":"NE","Nevada":"NV",
+  "New Hampshire":"NH","New Jersey":"NJ","New Mexico":"NM","New York":"NY",
+  "North Carolina":"NC","North Dakota":"ND","Ohio":"OH","Oklahoma":"OK",
+  "Oregon":"OR","Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC",
+  "South Dakota":"SD","Tennessee":"TN","Texas":"TX","Utah":"UT","Vermont":"VT",
+  "Virginia":"VA","Washington":"WA","West Virginia":"WV","Wisconsin":"WI","Wyoming":"WY"
+};
+
+// ── GLOBALS ──
+let map, markersLayer, allPins = [], currentFilter = 'all', sheetUrl = '';
+const STORAGE_KEY = 'installer_sheet_url';
+const PRELOADED_URL = 'https://docs.google.com/spreadsheets/d/1EOzEMoXJAOCq1hWMT31tiU1PmJ2r552AfVXstQtr-14/pub?output=csv&gid=230834364';
+
+// ── INIT MAP ──
+window.addEventListener('load', function () {
+  map = L.map('map', {
+    center: [39.5, -98.35], zoom: 4, minZoom: 3, maxZoom: 13, zoomControl: false
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+    maxZoom: 19
+  }).addTo(map);
+
+  L.control.zoom({ position: 'bottomleft' }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+
+  // Always auto-load from hardcoded sheet URL
+  sheetUrl = PRELOADED_URL;
+  fetchSheet(PRELOADED_URL);
+  document.getElementById('setup-banner').style.display = 'none';
+
+  // Search
+  const searchEl = document.getElementById('search');
+  const resultsEl = document.getElementById('search-results');
+  searchEl.addEventListener('input', () => {
+    const q = searchEl.value.trim().toLowerCase();
+    if (!q) { resultsEl.style.display = 'none'; return; }
+    const hits = allPins.filter(p =>
+      p.city.toLowerCase().includes(q) ||
+      p.state.toLowerCase().includes(q) ||
+      p.installers.some(i => i.company.toLowerCase().includes(q))
+    ).slice(0, 8);
+    if (!hits.length) { resultsEl.style.display = 'none'; return; }
+    resultsEl.innerHTML = hits.map(p =>
+      `<div class="sr-item" onclick="jumpTo('${p.id}')">
+        <span>${p.city}, <strong>${STATE_ABBR[p.state] || p.state}</strong></span>
+        <span class="sr-badge">${p.installers.length}</span>
+      </div>`
+    ).join('');
+    resultsEl.style.display = 'block';
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#search-wrap')) resultsEl.style.display = 'none';
+  });
+});
+
+// ── GEOCODE a city name from notes ──
+function geocode(cityName) {
+  const key = cityName.toLowerCase().trim()
+    .replace(/\s+area[s]?$/, '').replace(/\s+areas?$/, '').trim();
+  return CITY_COORDS[key] || null;
+}
+
+// ── FETCH & PARSE GOOGLE SHEET ──
+function toCSVUrl(url) {
+  if (url.includes('output=csv')) return url;
+  const idMatch = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!idMatch) return null;
+  const id = idMatch[1];
+  const gidMatch = url.match(/[#&?]gid=(\d+)/);
+  const gid = gidMatch ? gidMatch[1] : '0';
+  return `https://docs.google.com/spreadsheets/d/${id}/pub?output=csv&gid=${gid}`;
+}
+
+function fetchSheet(url) {
+  setStatus('loading', 'Loading sheet…');
+  document.getElementById('url-error').style.display = 'none';
+  const csvUrl = toCSVUrl(url);
+  if (!csvUrl) {
+    setStatus('error', 'Invalid URL');
+    document.getElementById('url-error').textContent = '\u26a0 Could not parse that URL. Paste the full Google Sheets link.';
+    document.getElementById('url-error').style.display = 'block';
+    document.getElementById('loading-msg').style.display = 'none';
+    return;
+  }
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(csvUrl)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(csvUrl)}`,
+    csvUrl
+  ];
+  tryFetch(proxies, 0);
+}
+
+function tryFetch(urls, idx) {
+  if (idx >= urls.length) {
+    setStatus('error', 'Could not load sheet');
+    document.getElementById('url-error').innerHTML =
+      '\u26a0 Could not reach the sheet. Steps to fix:<br>' +
+      '1. In Google Sheets go to <b>File \u2192 Share \u2192 Publish to web</b><br>' +
+      '2. Choose <b>Entire Document</b>, format <b>CSV</b>, click <b>Publish</b><br>' +
+      '3. Copy the URL it gives you (ends in <code>pub?output=csv</code>) and paste it here';
+    document.getElementById('url-error').style.display = 'block';
+    document.getElementById('loading-msg').style.display = 'none';
+    return;
+  }
+  fetch(urls[idx])
+    .then(r => { if (!r.ok) throw new Error('bad'); return r.text(); })
+    .then(csv => {
+      if (csv.trim().startsWith('<!')) throw new Error('html not csv');
+      parseAndRender(csv);
+      localStorage.setItem(STORAGE_KEY, sheetUrl);
+      hideModal();
+      document.getElementById('setup-banner').style.display = 'none';
+      document.getElementById('loading-msg').style.display = 'none';
+    })
+    .catch(() => tryFetch(urls, idx + 1));
+}
+
+// ── PARSE CSV ──
+// Expected columns: State, Company, Contact, Phone, Email, City, Notes, Active
+function parseAndRender(csv) {
+  const lines = csv.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
+
+  const iState   = headers.indexOf('state');
+  const iCompany = headers.indexOf('company');
+  const iContact = headers.indexOf('contact');
+  const iPhone   = headers.indexOf('phone');
+  const iEmail   = headers.indexOf('email');
+  const iCity    = headers.indexOf('city');
+  const iNotes   = headers.indexOf('notes');
+  const iActive  = headers.indexOf('active');
+
+  if (iState < 0 || iCompany < 0) {
+    setStatus('error', 'Missing required columns');
+    return;
+  }
+
+  // Group by city+state
+  const cityMap = {};
+  const companySet = new Set();
+  const stateSet = new Set();
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i]);
+    if (!cols[iCompany]) continue;
+    const active = iActive >= 0 ? cols[iActive].toLowerCase() : 'yes';
+    if (active === 'no' || active === 'false' || active === '0') continue;
+
+    const state   = cols[iState]   || '';
+    const company = cols[iCompany] || '';
+    const contact = cols[iContact] || '';
+    const phone   = cols[iPhone]   || '';
+    const email   = cols[iEmail]   || '';
+    const city    = cols[iCity]    || '';
+    const notes   = cols[iNotes]   || '';
+
+    if (!state || !company) continue;
+    companySet.add(company);
+    stateSet.add(state);
+
+    // Try to geocode the city
+    const coords = geocode(city) || geocode(state + ' center');
+    if (!coords) continue;
+
+    const key = `${city}||${state}`;
+    if (!cityMap[key]) {
+      cityMap[key] = { city, state, lat: coords[0], lng: coords[1], installers: [], id: key };
+    }
+    cityMap[key].installers.push({ company, contact, phone, email, notes });
+  }
+
+  allPins = Object.values(cityMap);
+  renderPins();
+
+  // Update stats
+  document.getElementById('h-companies').textContent = companySet.size;
+  document.getElementById('h-locations').textContent = allPins.length;
+  document.getElementById('h-states').textContent = stateSet.size;
+  setStatus('live', `Live · ${allPins.length} locations`);
+}
+
+function parseCSVLine(line) {
+  const result = []; let cur = ''; let inQ = false;
+  for (let c of line) {
+    if (c === '"') { inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ''; }
+    else { cur += c; }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+// ── RENDER PINS ──
+function renderPins() {
+  markersLayer.clearLayers();
+  allPins.forEach(pin => {
+    const n = pin.installers.length;
+    if (currentFilter === 'multi' && n < 3) return;
+
+    const size = n >= 6 ? 34 : n >= 3 ? 28 : 24;
+    const bg = n >= 6 ? '#0f2d6e' : n >= 3 ? '#1a5fce' : '#5ba4f5';
+
+    const icon = L.divIcon({
+      html: `<div class="map-pin" style="width:${size}px;height:${size}px;background:${bg};">
+               <div class="map-pin-inner">${n}</div>
+             </div>`,
+      className: '', iconSize: [size, size],
+      iconAnchor: [size/2, size], popupAnchor: [0, -(size+4)]
+    });
+
+    const marker = L.marker([pin.lat, pin.lng], { icon });
+    marker.bindPopup(
+      `<div class="popup-body">
+        <div class="popup-city">${pin.city}</div>
+        <div class="popup-state">${pin.state}</div>
+        <div class="popup-count">${n} installer${n>1?'s':''}</div>
+        <button class="popup-view" id="view-btn-${encodeURIComponent(pin.id)}">View Installers →</button>
+      </div>`,
+      { maxWidth: 250 }
+    );
+    marker.on('popupopen', () => {
+      setTimeout(() => {
+        const btn = document.getElementById('view-btn-' + encodeURIComponent(pin.id));
+        if (btn) btn.onclick = () => { openSidebar(pin); map.closePopup(); };
+      }, 50);
+    });
+    marker.addTo(markersLayer);
+    marker._pin = pin;
+  });
+}
+
+// ── SIDEBAR ──
+function openSidebar(pin) {
+  document.getElementById('sb-city').textContent = pin.city;
+  document.getElementById('sb-state').textContent = pin.state;
+  document.getElementById('sb-count').textContent = `${pin.installers.length} Active Installer${pin.installers.length > 1 ? 's' : ''}`;
+  document.getElementById('sb-list').innerHTML = pin.installers.map((inst, i) =>
+    `<div class="sb-card" style="animation-delay:${i*0.04}s">
+      <div class="sb-co">${inst.company}</div>
+      ${inst.contact ? `<div class="sb-contact">👤 ${inst.contact}${inst.phone ? ' · ' + inst.phone : ''}</div>` : ''}
+      ${inst.notes   ? `<div class="sb-note">${inst.notes}</div>` : ''}
+    </div>`
+  ).join('');
+  document.getElementById('sidebar').classList.add('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+// ── JUMP TO ──
+function jumpTo(id) {
+  const pin = allPins.find(p => p.id === id);
+  if (!pin) return;
+  document.getElementById('search-results').style.display = 'none';
+  document.getElementById('search').value = pin.city;
+  map.flyTo([pin.lat, pin.lng], 10, { duration: 1.1 });
+  setTimeout(() => openSidebar(pin), 1200);
+}
+
+// ── FILTER ──
+function setFilter(type, btn) {
+  document.querySelectorAll('.btn[id^=btn-]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = type;
+  renderPins();
+}
+
+// ── STATUS ──
+function setStatus(state, msg) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot' + (state === 'loading' ? ' loading' : state === 'error' ? ' error' : '');
+  document.getElementById('status-text').textContent = msg;
+}
+function reloadData() {
+  if (sheetUrl) fetchSheet(sheetUrl);
+  else showModal();
+}
+
+// ── MODAL ──
+function showModal() { document.getElementById('sheets-modal').classList.add('show'); }
+function hideModal() { document.getElementById('sheets-modal').classList.remove('show'); }
+function connectSheet() {
+  const url = document.getElementById('sheet-url').value.trim();
+  if (!url || !url.includes('docs.google.com')) {
+    document.getElementById('url-error').style.display = 'block'; return;
+  }
+  document.getElementById('url-error').style.display = 'none';
+  document.getElementById('loading-msg').style.display = 'block';
+  sheetUrl = url;
+  fetchSheet(url);
+}
+
+// ── SAMPLE DATA ──
+function loadSampleData() {
+  document.getElementById('setup-banner').style.display = 'none';
+  const sample = `State,Company,Contact,Phone,Email,City,Notes,Active
+Tennessee,Hands Free,David Post,314.384.8165,david.post@handsfree.com,Nashville,White House/Portland/Monterey Areas,yes
+Tennessee,Mobile Contract Services,Joey Montgomery,877-602-9477,dispatch@gpsinstaller.com,Nashville,Nashville/Knoxville/Memphis/Kingsport Areas,yes
+Tennessee,Field Evolution,Morgan Bemko,614-600-3333,fedispatch@fieldevolution.com,Knoxville,Fayetteville/Knoxville/Hohenwald/Nashville Areas,yes
+Tennessee,DRIG LLC,Dave Avelar,805.738.6677,consult@drigusa.com,Memphis,Greenville/Knoxville/La Vergne/Memphis Areas,yes
+Tennessee,ViaTech,Tanner Cox,817.443.7530,ftsgps@via-tech.net,Nashville,Nashville Area,yes
+Texas,Hands Free,David Post,314.384.8165,david.post@handsfree.com,Houston,Houston/Spring/Cypress/San Antonio Areas,yes
+Texas,Orbital,Sara Scharnowske,317-774-3668,sara@orbitalcustoms.com,Dallas,Dallas/Tyler/Houston/San Antonio Areas,yes
+Texas,Metro Mobile Electronics,Devin Warner,469.628.5183,dispatch@mmegps.com,Dallas,Arlington/Dallas/Fort Worth/Houston Areas,yes
+Texas,ViaTech,Tanner Cox,817.443.7530,ftsgps@via-tech.net,Austin,Dallas/Buda/Houston/Austin/Spring Areas,yes
+Florida,Hands Free,David Post,314.384.8165,david.post@handsfree.com,Jacksonville,Jacksonville/Boca Raton/Cape Coral Areas,yes
+Florida,GPS Fleet Pros,,,, Tampa,Clearwater/Tampa Areas,yes
+Florida,ViaTech,Tanner Cox,817.443.7530,ftsgps@via-tech.net,Miami,Miami/Orlando Areas,yes
+Georgia,API Signal,,,, Atlanta,Atlanta/Augusta/Buford/Macon/Savannah Areas,yes
+Georgia,Fusion Fleet Services,Bonnie Smith,404.934.9689,installs@fusionfleetservices.com,Atlanta,Kennesaw/Marietta/Atlanta Areas,yes
+California,Orbital,Sara Scharnowske,317-774-3668,sara@orbitalcustoms.com,Los Angeles,Los Angeles/Fresno/San Jose Areas,yes
+California,Totally Wireless GPS,Mark Mcguire,661-263-4333,installs@totallywirelessgps.com,San Diego,Los Angeles/Sacramento/San Francisco/San Diego Areas,yes`;
+  parseAndRender(sample);
+}
+
+// ── JOB ADDRESS SEARCH ──
+let jobMarker = null;
+
+function findNearest() {
+  const address = document.getElementById('job-address').value.trim();
+  if (!address) return;
+  if (allPins.length === 0) { alert('Map is still loading installers, please wait a moment.'); return; }
+  document.getElementById('job-search-btn').textContent = 'Searching…';
+  fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(address) + '&limit=1', { headers: {'Accept-Language':'en'} })
+    .then(r => r.json())
+    .then(results => {
+      document.getElementById('job-search-btn').textContent = 'Find Nearest';
+      if (!results || !results.length) { alert('Address not found. Try a city name or zip code.'); return; }
+      const lat = parseFloat(results[0].lat);
+      const lng = parseFloat(results[0].lon);
+      showNearest(lat, lng, address);
+    })
+    .catch(() => { document.getElementById('job-search-btn').textContent = 'Find Nearest'; alert('Could not search. Check your internet connection.'); });
+}
+
+function haversineMiles(lat1, lng1, lat2, lng2) {
+  const R = 3958.8, dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function showNearest(lat, lng, address) {
+  if (jobMarker) map.removeLayer(jobMarker);
+  jobMarker = L.marker([lat, lng], {
+    icon: L.divIcon({ html: '<div class="job-map-pin">📍</div>', className:'', iconSize:[34,34], iconAnchor:[17,34] }),
+    zIndexOffset: 1000
+  }).addTo(map).bindPopup('<div class="popup-body"><div class="popup-city" style="font-size:0.85rem">' + address + '</div><div class="popup-state">Job Location</div></div>').openPopup();
+
+  const sorted = allPins.map(p => ({ pin:p, dist: haversineMiles(lat,lng,p.lat,p.lng) }))
+                        .sort((a,b) => a.dist - b.dist).slice(0, 8);
+
+  const panel = document.getElementById('nearest-panel');
+  panel.innerHTML = '<div class="nearest-header">Nearest Installers <span>' + sorted.length + ' closest locations</span></div>' +
+    sorted.map((item, i) => {
+      const cls = i===0?'gold':i===1?'silver':i===2?'bronze':'';
+      const cos = [...new Set(item.pin.installers.map(x=>x.company))].slice(0,3).join(', ');
+      const more = item.pin.installers.length > 3 ? ' +' + (item.pin.installers.length-3) + ' more' : '';
+      return '<div class="nearest-card" onclick="jumpToPin(\'' + encodeURIComponent(item.pin.id) + '\')">' +
+        '<div class="nearest-rank ' + cls + '">' + (i+1) + '</div>' +
+        '<div class="nearest-info"><div class="nearest-city">' + item.pin.city + ', ' + item.pin.state + '</div>' +
+        '<div class="nearest-cos">' + cos + more + '</div></div>' +
+        '<div class="nearest-dist"><strong>' + item.dist.toFixed(1) + '</strong><span>miles</span></div></div>';
+    }).join('');
+  panel.style.display = 'block';
+  document.getElementById('job-clear-btn').style.display = 'block';
+  map.fitBounds([[lat,lng], ...sorted.slice(0,3).map(x=>[x.pin.lat,x.pin.lng])], {padding:[60,60]});
+}
+
+function jumpToPin(id) {
+  const pin = allPins.find(p => p.id === decodeURIComponent(id));
+  if (!pin) return;
+  map.flyTo([pin.lat, pin.lng], 11, {duration:0.8});
+  setTimeout(() => openSidebar(pin), 900);
+}
+
+function clearJobSearch() {
+  if (jobMarker) { map.removeLayer(jobMarker); jobMarker = null; }
+  document.getElementById('job-address').value = '';
+  document.getElementById('nearest-panel').style.display = 'none';
+  document.getElementById('job-clear-btn').style.display = 'none';
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('job-address');
+  if (el) el.addEventListener('keydown', e => { if (e.key==='Enter') findNearest(); });
+});
+
+</script>
+</body>
+</html>
