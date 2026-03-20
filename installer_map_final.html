@@ -825,9 +825,10 @@ window.addEventListener('load', function () {
   L.control.zoom({ position: 'bottomleft' }).addTo(map);
   markersLayer = L.layerGroup().addTo(map);
 
-  // Always auto-load from hardcoded sheet URL
-  sheetUrl = PRELOADED_URL;
-  fetchSheet(PRELOADED_URL);
+  // Always auto-load — use localStorage if available, otherwise use hardcoded URL
+  sheetUrl = localStorage.getItem('installer_sheet_url') || PRELOADED_URL;
+  localStorage.setItem('installer_sheet_url', sheetUrl);
+  fetchSheet(sheetUrl);
 
   // Search
   const searchEl = document.getElementById('search');
