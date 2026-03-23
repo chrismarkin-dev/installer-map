@@ -1010,9 +1010,14 @@ function parseAndRender(csv) {
     stateSet.add(state);
 
     // Split Notes by / to get every city, place a pin for each
-    const rawCities = notes.split('/').map(c =>
-      c.replace(/\barea[s]?\b/gi, '').replace(/\(.*?\)/g, '').trim()
+    // Also extract cities from parentheses e.g. "Statewide (Lincoln Area)"
+    const parenCities = [...notes.matchAll(/\(([^)]+)\)/g)].map(m =>
+      m[1].replace(/\barea[s]?\b/gi, '').trim()
     ).filter(c => c.length > 1);
+
+    const rawCities = notes.split('/').map(c =>
+      c.replace(/\barea[s]?\b/gi, '').replace(/\(.*?\)/g, '').replace(/\bstatewide\b/gi, '').trim()
+    ).filter(c => c.length > 1).concat(parenCities);
 
     let placed = false;
     rawCities.forEach(rawCity => {
