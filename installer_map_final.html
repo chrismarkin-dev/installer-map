@@ -793,7 +793,28 @@ const CITY_COORDS = {
   "san juan":[18.4655,-66.1057],"carolina":[18.3805,-65.9570],"carolina pr":[18.3805,-65.9570],"ponce":[18.0111,-66.6141],
   "bayamon":[18.3985,-66.1603],"caguas":[18.2341,-66.0355],
   // CANADA provinces
-  "alberta":[53.9333,-116.5765],"ontario":[51.2538,-85.3232],"british columbia":[53.7267,-127.6476]
+  "alberta":[53.9333,-116.5765],"ontario":[51.2538,-85.3232],"british columbia":[53.7267,-127.6476],
+  // STATE-SPECIFIC ENTRIES to avoid city name collisions
+  "manchester, nh":[42.9956,-71.4548],"manchester, ct":[41.7762,-72.5215],
+  "manchester, uk":[53.4808,-2.2426],"manchester, united kingdom":[53.4808,-2.2426],
+  "london, uk":[51.5074,-0.1278],"london, united kingdom":[51.5074,-0.1278],
+  "london, ontario":[42.9849,-81.2453],"london, canada":[42.9849,-81.2453],
+  "birmingham, uk":[52.4862,-1.8904],"birmingham, united kingdom":[52.4862,-1.8904],
+  "birmingham, al":[33.5186,-86.8104],
+  "springfield, il":[39.7817,-89.6501],"springfield, mo":[37.2090,-93.2923],
+  "springfield, ma":[42.1015,-72.5898],"springfield, or":[44.0462,-123.0220],
+  "columbus, oh":[39.9612,-82.9988],"columbus, ga":[32.4610,-84.9877],
+  "portland, or":[45.5051,-122.6750],"portland, me":[43.6591,-70.2568],
+  "richmond, va":[37.5407,-77.4360],"richmond, bc":[49.1666,-123.1336],
+  "charleston, sc":[32.7765,-79.9311],"charleston, wv":[38.3498,-81.6326],
+  "columbia, sc":[34.0007,-81.0348],"columbia, mo":[38.9517,-92.3341],
+  "lexington, ky":[38.0406,-84.5037],"lexington, ne":[40.7810,-99.7401],
+  "fayetteville, nc":[35.0527,-78.8784],"fayetteville, ar":[36.0626,-94.1574],
+  "fayetteville, tn":[35.1523,-86.5703],
+  "aurora, co":[39.7294,-104.8319],"aurora, il":[41.7606,-88.3201],
+  "san juan, puerto rico":[18.4655,-66.1057],"san juan, pr":[18.4655,-66.1057],
+  "carolina, puerto rico":[18.3805,-65.9570],"carolina, pr":[18.3805,-65.9570],
+  "victoria, bc":[48.4284,-123.3656],"victoria, tx":[28.8053,-97.0036]
 };
 
 // ── STATE → ABBREVIATION ──
@@ -861,10 +882,32 @@ window.addEventListener('load', function () {
 });
 
 // ── GEOCODE a city name from notes ──
-function geocode(cityName) {
-  const key = cityName.toLowerCase().trim()
+function geocode(cityName, state) {
+  const clean = cityName.toLowerCase().trim()
     .replace(/\s+area[s]?$/, '').replace(/\s+areas?$/, '').trim();
-  return CITY_COORDS[key] || null;
+  if (!clean) return null;
+
+  // Try "city, state abbreviation" first e.g. "manchester, nh"
+  const stateAbbr = STATE_ABBR[state] || '';
+  if (stateAbbr) {
+    const withState = clean + ', ' + stateAbbr.toLowerCase();
+    if (CITY_COORDS[withState]) return CITY_COORDS[withState];
+  }
+
+  // Try "city state" e.g. "manchester nh"
+  if (stateAbbr) {
+    const withStateNoComma = clean + ' ' + stateAbbr.toLowerCase();
+    if (CITY_COORDS[withStateNoComma]) return CITY_COORDS[withStateNoComma];
+  }
+
+  // Try "city, full state" e.g. "manchester, new hampshire"
+  if (state) {
+    const withFullState = clean + ', ' + state.toLowerCase();
+    if (CITY_COORDS[withFullState]) return CITY_COORDS[withFullState];
+  }
+
+  // Fall back to just city name
+  return CITY_COORDS[clean] || null;
 }
 
 // ── FETCH & PARSE GOOGLE SHEET ──
@@ -972,7 +1015,7 @@ function parseAndRender(csv) {
 
     let placed = false;
     rawCities.forEach(rawCity => {
-      const coords = geocode(rawCity);
+      const coords = geocode(rawCity, state);
       if (!coords) return;
       placed = true;
       const key = (rawCity + '||' + state).toLowerCase();
@@ -983,7 +1026,7 @@ function parseAndRender(csv) {
 
     // Fallback to City column if no notes cities matched
     if (!placed) {
-      const coords = geocode(city);
+      const coords = geocode(city, state);
       if (coords) {
         const key = (city + '||' + state).toLowerCase();
         if (!cityMap[key]) cityMap[key] = { city, state, lat: coords[0], lng: coords[1], installers: [], id: key };
