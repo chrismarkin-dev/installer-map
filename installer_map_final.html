@@ -933,16 +933,20 @@ function fetchSheet(url) {
     document.getElementById('loading-msg').style.display = 'none';
     return;
   }
+  // Try direct first — published Google Sheets URLs serve CORS headers.
+  // Fall back to public CORS proxies if direct fetch fails.
   const proxies = [
+    csvUrl,
     `https://corsproxy.io/?${encodeURIComponent(csvUrl)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(csvUrl)}`,
-    csvUrl
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(csvUrl)}`
   ];
+  console.log('[installer-map] CSV URL:', csvUrl);
   tryFetch(proxies, 0);
 }
 
 function tryFetch(urls, idx) {
   if (idx >= urls.length) {
+    console.error('[installer-map] All fetch attempts failed.');
     setStatus('error', 'Could not load sheet');
     document.getElementById('url-error').innerHTML =
       '\u26a0 Could not reach the sheet. Steps to fix:<br>' +
@@ -953,24 +957,46 @@ function tryFetch(urls, idx) {
     document.getElementById('loading-msg').style.display = 'none';
     return;
   }
+  console.log('[installer-map] Trying fetch attempt', idx + 1, ':', urls[idx].slice(0, 80) + '...');
   fetch(urls[idx])
-    .then(r => { if (!r.ok) throw new Error('bad'); return r.text(); })
+    .then(r => {
+      console.log('[installer-map] Response status:', r.status, 'for attempt', idx + 1);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
     .then(csv => {
-      if (csv.trim().startsWith('<!')) throw new Error('html not csv');
+      console.log('[installer-map] Got', csv.length, 'bytes. First 100 chars:', csv.slice(0, 100));
+      if (csv.trim().startsWith('<!') || csv.trim().toLowerCase().startsWith('<html')) {
+        throw new Error('Got HTML instead of CSV — sheet may not be published');
+      }
       parseAndRender(csv);
       localStorage.setItem(STORAGE_KEY, sheetUrl);
       hideModal();
       document.getElementById('setup-banner').style.display = 'none';
       document.getElementById('loading-msg').style.display = 'none';
     })
-    .catch(() => tryFetch(urls, idx + 1));
+    .catch(err => {
+      console.warn('[installer-map] Attempt', idx + 1, 'failed:', err.message);
+      tryFetch(urls, idx + 1);
+    });
 }
 
 // ── PARSE CSV ──
 // Expected columns: State, Company, Contact, Phone, Email, City, Notes, Active
 function parseAndRender(csv) {
-  const lines = csv.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.replace(/"/g,'').trim().toLowerCase());
+  // Normalize line endings — Google Sheets CSV uses \r\n
+  csv = csv.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Split rows correctly even when fields contain quoted newlines
+  const rows = parseCSV(csv);
+  if (!rows.length) {
+    console.error('[installer-map] CSV had no rows');
+    setStatus('error', 'Empty sheet');
+    return;
+  }
+
+  const headers = rows[0].map(h => h.trim().toLowerCase());
+  console.log('[installer-map] Parsed headers:', headers);
 
   const iState   = headers.indexOf('state');
   const iCompany = headers.indexOf('company');
@@ -982,7 +1008,14 @@ function parseAndRender(csv) {
   const iActive  = headers.indexOf('active');
 
   if (iState < 0 || iCompany < 0) {
+    console.error('[installer-map] Missing required columns. Found headers:', headers,
+      '— need at least "state" and "company"');
     setStatus('error', 'Missing required columns');
+    document.getElementById('url-error').innerHTML =
+      '\u26a0 Sheet is missing required columns. Row 1 must include <b>State</b> and <b>Company</b> ' +
+      '(also recommended: Contact, Phone, Email, City, Notes, Active). ' +
+      'Found: ' + headers.join(', ');
+    document.getElementById('url-error').style.display = 'block';
     return;
   }
 
@@ -990,12 +1023,15 @@ function parseAndRender(csv) {
   const cityMap = {};
   const companySet = new Set();
   const stateSet = new Set();
+  let geocodeFailures = 0;
+  let rowsProcessed = 0;
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCSVLine(lines[i]);
+  for (let i = 1; i < rows.length; i++) {
+    const cols = rows[i];
     if (!cols[iCompany]) continue;
-    const active = iActive >= 0 ? cols[iActive].toLowerCase() : 'yes';
+    const active = iActive >= 0 ? (cols[iActive] || '').toLowerCase() : 'yes';
     if (active === 'no' || active === 'false' || active === '0') continue;
+    rowsProcessed++;
 
     const state   = cols[iState]   || '';
     const company = cols[iCompany] || '';
@@ -1038,9 +1074,14 @@ function parseAndRender(csv) {
         if (!cityMap[key]) cityMap[key] = { city, state, lat: coords[0], lng: coords[1], installers: [], id: key };
         if (!cityMap[key].installers.find(x => x.company === company))
           cityMap[key].installers.push({ company, contact, phone, email, notes });
+      } else {
+        geocodeFailures++;
+        console.warn('[installer-map] Could not geocode row', i, '— city:', JSON.stringify(city), 'state:', JSON.stringify(state), 'notes:', JSON.stringify(notes));
       }
     }
   }
+
+  console.log('[installer-map] Processed', rowsProcessed, 'rows ·', Object.keys(cityMap).length, 'unique pins ·', geocodeFailures, 'geocode failures');
 
   allPins = Object.values(cityMap);
   renderPins();
@@ -1052,15 +1093,34 @@ function parseAndRender(csv) {
   setStatus('live', `Live · ${allPins.length} locations`);
 }
 
-function parseCSVLine(line) {
-  const result = []; let cur = ''; let inQ = false;
-  for (let c of line) {
-    if (c === '"') { inQ = !inQ; }
-    else if (c === ',' && !inQ) { result.push(cur.trim()); cur = ''; }
-    else { cur += c; }
+// Full CSV parser: handles quoted fields, escaped "" quotes, and embedded newlines.
+// Returns array of rows, each row an array of cells.
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; }   // escaped quote
+        else { inQ = false; }
+      } else {
+        cell += c;
+      }
+    } else {
+      if (c === '"') { inQ = true; }
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+      else { cell += c; }
+    }
   }
-  result.push(cur.trim());
-  return result;
+  // flush trailing cell/row
+  if (cell.length > 0 || row.length > 0) { row.push(cell); rows.push(row); }
+  // Drop trailing empty row from terminal newline
+  if (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
+  return rows;
 }
 
 // ── RENDER PINS ──
