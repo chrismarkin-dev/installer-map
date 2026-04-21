@@ -883,6 +883,61 @@ window.addEventListener('load', function () {
 });
 
 // ── GEOCODE a city name from notes ──
+
+// State geographic centers — fallback for "Statewide", "Eastern X", etc.
+const STATE_CENTERS = {
+  'alabama': [32.806, -86.791], 'alaska': [61.370, -152.404], 'arizona': [33.730, -111.431],
+  'arkansas': [34.969, -92.373], 'california': [36.116, -119.682], 'colorado': [39.059, -105.311],
+  'connecticut': [41.597, -72.755], 'delaware': [39.318, -75.507], 'florida': [27.766, -81.686],
+  'georgia': [33.040, -83.643], 'hawaii': [21.094, -157.498], 'idaho': [44.240, -114.479],
+  'illinois': [40.349, -88.986], 'indiana': [39.849, -86.258], 'iowa': [42.011, -93.210],
+  'kansas': [38.526, -96.726], 'kentucky': [37.668, -84.670], 'louisiana': [31.169, -91.867],
+  'maine': [44.693, -69.381], 'maryland': [39.063, -76.802], 'massachusetts': [42.230, -71.530],
+  'michigan': [43.326, -84.536], 'minnesota': [45.694, -93.900], 'mississippi': [32.741, -89.678],
+  'missouri': [38.456, -92.288], 'montana': [46.921, -110.454], 'nebraska': [41.125, -98.268],
+  'nevada': [38.313, -117.055], 'new hampshire': [43.452, -71.563], 'new jersey': [40.299, -74.521],
+  'new mexico': [34.840, -106.248], 'new york': [42.165, -74.948], 'north carolina': [35.630, -79.806],
+  'north dakota': [47.528, -99.784], 'ohio': [40.388, -82.764], 'oklahoma': [35.565, -96.928],
+  'oregon': [44.572, -122.070], 'pennsylvania': [40.590, -77.209], 'rhode island': [41.680, -71.512],
+  'south carolina': [33.856, -80.945], 'south dakota': [44.299, -99.439], 'tennessee': [35.747, -86.692],
+  'texas': [31.054, -97.563], 'utah': [40.150, -111.862], 'vermont': [44.045, -72.711],
+  'virginia': [37.769, -78.169], 'washington': [47.400, -121.490], 'west virginia': [38.491, -80.954],
+  'wisconsin': [44.268, -89.616], 'wyoming': [42.756, -107.302]
+};
+
+// Cities not in CITY_COORDS — supplemental coordinates
+const EXTRA_CITY_COORDS = {
+  'calera, al':         [33.1043, -86.7536],
+  'pinson, al':         [33.6862, -86.6833],
+  'centre, al':         [34.1523, -85.6714],
+  'midland city, al':   [31.3204, -85.4897],
+  'merced, ca':         [37.3022, -120.4830],
+  'apple valley, ca':   [34.5008, -117.1858],
+  'fort meade, fl':     [27.7530, -81.8025],
+  'coral springs, fl':  [26.2712, -80.2706],
+  'carrolton, ga':      [33.5801, -85.0766],   // common misspelling of Carrollton
+  'carrollton, ga':     [33.5801, -85.0766],
+  'marrietta, ga':      [33.9526, -84.5499],   // common misspelling of Marietta
+  'marietta, ga':       [33.9526, -84.5499],
+  'o\'fallon, il':      [38.5922, -89.9112],
+  'dunnegon, mo':       [36.4378, -90.5532],   // likely Doniphan, MO area
+  'doniphan, mo':       [36.6217, -90.8232],
+  'bay city, mi':       [43.5944, -83.8889],
+  'brookfield township, oh': [41.2381, -80.5523],
+  'cedar point, nc':    [34.6918, -77.0724],
+  'albertson, ny':      [40.7720, -73.6470],
+  'bronx, ny':          [40.8448, -73.8648],
+  'hunsville, al':      [34.7304, -86.5861],   // common misspelling of Huntsville
+  'dickinson, nd':      [46.8792, -102.7896],
+  'duncan, ok':         [34.5023, -97.9578],
+  'dale city, va':      [38.6331, -77.3119],
+  'south charleston, wv': [38.3682, -81.6998],
+  'pasaic, nj':         [40.8568, -74.1285],   // misspelling of Passaic
+  'passaic, nj':        [40.8568, -74.1285],
+  'st. albens, wv':     [38.3804, -81.8362],   // misspelling of St. Albans
+  'st. albans, wv':     [38.3804, -81.8362]
+};
+
 function geocode(cityName, state) {
   const clean = cityName.toLowerCase().trim()
     .replace(/\s+area[s]?$/, '').replace(/\s+areas?$/, '').trim();
@@ -893,6 +948,7 @@ function geocode(cityName, state) {
   if (stateAbbr) {
     const withState = clean + ', ' + stateAbbr.toLowerCase();
     if (CITY_COORDS[withState]) return CITY_COORDS[withState];
+    if (EXTRA_CITY_COORDS[withState]) return EXTRA_CITY_COORDS[withState];
   }
 
   // Try "city state" e.g. "manchester nh"
@@ -907,8 +963,23 @@ function geocode(cityName, state) {
     if (CITY_COORDS[withFullState]) return CITY_COORDS[withFullState];
   }
 
-  // Fall back to just city name
-  return CITY_COORDS[clean] || null;
+  // Just city name
+  if (CITY_COORDS[clean]) return CITY_COORDS[clean];
+  if (EXTRA_CITY_COORDS[clean]) return EXTRA_CITY_COORDS[clean];
+
+  // Final fallback: state center for vague regional entries
+  // ("Statewide", "Eastern X", "Western X", "Northern X", "Southern X",
+  //  "Greater X", "North X", "South X", "Central X")
+  const stateLower = (state || '').toLowerCase();
+  const isRegional =
+    /^(statewide|eastern|western|northern|southern|north|south|east|west|central|greater)\b/i.test(clean) ||
+    clean === stateLower ||
+    clean.endsWith(' ' + stateLower);
+  if (isRegional && STATE_CENTERS[stateLower]) {
+    return STATE_CENTERS[stateLower];
+  }
+
+  return null;
 }
 
 // ── FETCH & PARSE GOOGLE SHEET ──
