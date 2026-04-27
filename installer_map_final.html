@@ -950,9 +950,11 @@ const EXTRA_CITY_COORDS = {
   'portsmouth, va':     [36.8354, -76.2983],
   'rochester, mn':      [44.0121, -92.4802],
   'rochester, ny':      [43.1566, -77.6088],
+  'rochester, wa':      [46.8226, -123.0921],
   'springfield, il':    [39.7817, -89.6501],
   'springfield, ma':    [42.1015, -72.5898],
   'springfield, or':    [44.0462, -123.0220],
+  'taylorsville, ga':   [34.0934, -84.9777],
   'taylorsville, ky':   [38.0345, -85.3452],
   'taylorsville, ut':   [40.6677, -111.9388],
   'vancouver, wa':      [45.6387, -122.6615],
@@ -1019,12 +1021,14 @@ function geocode(cityName, state) {
     if (CITY_COORDS[withFullState]) return CITY_COORDS[withFullState];
   }
 
-  // Just city name (only allowed when caller has no state info — otherwise
-  // this would silently return a same-named city from the wrong state).
-  if (!state) {
-    if (CITY_COORDS[clean]) return CITY_COORDS[clean];
-    if (EXTRA_CITY_COORDS[clean]) return EXTRA_CITY_COORDS[clean];
-  }
+  // Bare city-name fallback. Most CITY_COORDS entries are stored as bare names
+  // (e.g. "atlanta" rather than "atlanta, ga"), so this is the workhorse lookup.
+  // Cities that share a name across multiple states (Taylorsville KY/UT,
+  // Springfield IL/MA/OR, etc.) are explicitly listed in EXTRA_CITY_COORDS with
+  // state qualifiers above, so the qualified-lookup branches earlier in this
+  // function will already have placed those rows correctly.
+  if (CITY_COORDS[clean]) return CITY_COORDS[clean];
+  if (EXTRA_CITY_COORDS[clean]) return EXTRA_CITY_COORDS[clean];
 
   // Final fallback: state center for vague regional entries
   // ("Statewide", "Eastern X", "Western X", "Northern X", "Southern X",
