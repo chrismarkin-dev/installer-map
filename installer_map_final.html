@@ -907,6 +907,62 @@ const STATE_CENTERS = {
 
 // Cities not in CITY_COORDS — supplemental coordinates
 const EXTRA_CITY_COORDS = {
+  // ── Disambiguated duplicates (cities that share a name across states) ──
+  // Without these, the geocoder's bare-name lookup would silently return whichever
+  // version of the city was defined last in CITY_COORDS, misplacing pins.
+  'aurora, co':         [39.7294, -104.8319],
+  'aurora, il':         [41.7606, -88.3201],
+  'birmingham, al':     [33.5186, -86.8104],
+  'bloomington, in':    [39.1653, -86.5264],
+  'bloomington, mn':    [44.8408, -93.3477],
+  'charleston, sc':     [32.7765, -79.9311],
+  'charleston, wv':     [38.3498, -81.6326],
+  'concord, ca':        [37.9779, -122.0311],
+  'concord, nh':        [43.2081, -71.5376],
+  'concord, nc':        [35.4088, -80.5800],
+  'covington, ky':      [39.0837, -84.5086],
+  'covington, va':      [37.7937, -79.9939],
+  'duluth, ga':         [34.0032, -84.1449],
+  'duluth, mn':         [46.7867, -92.1005],
+  'elizabeth, ky':      [37.7010, -85.7658],
+  'elizabeth, nj':      [40.6640, -74.2107],
+  'fayetteville, ar':   [36.0626, -94.1574],
+  'fayetteville, ga':   [33.4487, -84.4641],
+  'fayetteville, nc':   [35.0527, -78.8784],
+  'fayetteville, tn':   [35.1523, -86.5703],
+  'greenville, sc':     [34.8526, -82.3940],
+  'greenville, tn':     [36.1631, -82.8307],
+  'hamilton, oh':       [39.3995, -84.5613],
+  'huntsville, al':     [34.7304, -86.5861],
+  'huntsville, tx':     [30.7235, -95.5507],
+  'jacksonville, fl':   [30.3322, -81.6557],
+  'jacksonville, nc':   [34.7541, -77.4302],
+  'leesville, la':      [31.1449, -93.2635],
+  'leesville, sc':      [34.0115, -81.5132],
+  'lexington, ky':      [38.0406, -84.5037],
+  'lexington, ne':      [40.7810, -99.7401],
+  'lincoln, ne':        [40.8136, -96.7026],
+  'lincoln, ri':        [41.9023, -71.4312],
+  'portland, me':       [43.6591, -70.2568],
+  'portland, or':       [45.5051, -122.6750],
+  'portland, tn':       [36.5812, -86.5161],
+  'portsmouth, nh':     [43.0718, -70.7626],
+  'portsmouth, va':     [36.8354, -76.2983],
+  'rochester, mn':      [44.0121, -92.4802],
+  'rochester, ny':      [43.1566, -77.6088],
+  'springfield, il':    [39.7817, -89.6501],
+  'springfield, ma':    [42.1015, -72.5898],
+  'springfield, or':    [44.0462, -123.0220],
+  'taylorsville, ky':   [38.0345, -85.3452],
+  'taylorsville, ut':   [40.6677, -111.9388],
+  'vancouver, wa':      [45.6387, -122.6615],
+  'wilmington, de':     [39.7447, -75.5484],
+  'wilmington, nc':     [34.2257, -77.9447],
+  'windsor, va':        [36.9996, -76.9427],
+  'woodbridge, nj':     [40.5576, -74.2846],
+  'woodbridge, va':     [38.6582, -77.2497],
+
+  // ── Cities not in CITY_COORDS — supplemental coordinates ──
   'calera, al':         [33.1043, -86.7536],
   'pinson, al':         [33.6862, -86.6833],
   'centre, al':         [34.1523, -85.6714],
@@ -963,9 +1019,12 @@ function geocode(cityName, state) {
     if (CITY_COORDS[withFullState]) return CITY_COORDS[withFullState];
   }
 
-  // Just city name
-  if (CITY_COORDS[clean]) return CITY_COORDS[clean];
-  if (EXTRA_CITY_COORDS[clean]) return EXTRA_CITY_COORDS[clean];
+  // Just city name (only allowed when caller has no state info — otherwise
+  // this would silently return a same-named city from the wrong state).
+  if (!state) {
+    if (CITY_COORDS[clean]) return CITY_COORDS[clean];
+    if (EXTRA_CITY_COORDS[clean]) return EXTRA_CITY_COORDS[clean];
+  }
 
   // Final fallback: state center for vague regional entries
   // ("Statewide", "Eastern X", "Western X", "Northern X", "Southern X",
